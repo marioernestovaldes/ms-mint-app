@@ -18,7 +18,6 @@ from multiprocessing import freeze_support
 
 import ms_mint_app
 
-
 welcome = r"""
  __________________________________________________________________________________________________________
 /___/\\\\____________/\\\\__/\\\\\\\\\\\__/\\\\\_____/\\\__/\\\\\\\\\\\\\\\_______________/\\\_____________\
@@ -46,6 +45,7 @@ def _create_get_distribution(is_frozen, true_get_distribution, _Dist):
             return _Dist("1.5.0")
         else:
             return true_get_distribution(dist)
+
     return _get_distribution
 
 
@@ -54,15 +54,15 @@ def main():
 
     HOME = expanduser("~")
     DATADIR = str(P(HOME) / "MINT")
-    
+
     # Define local variables
     is_frozen = hasattr(sys, "_MEIPASS")
     true_get_distribution = pkg_resources.get_distribution
     _Dist = namedtuple("_Dist", ["version"])
-    
+
     # Create the distribution getter function with the necessary context
     get_distribution = _create_get_distribution(is_frozen, true_get_distribution, _Dist)
-    
+
     # Monkey patch the function so it can work once frozen and pkg_resources is of
     # no help
     pkg_resources.get_distribution = get_distribution
@@ -111,22 +111,53 @@ def main():
 
     url = f"http://{args.host}:{args.port}"
 
-    if not args.no_browser:
-        if os.name == "nt":
-            # https://github.com/pyinstaller/pyinstaller/wiki/Recipe-Multiprocessing
-            print('Using Windows')
-            multiprocessing.freeze_support()
+    # if not args.no_browser:
+    #     if os.name == "nt":
+    #         # https://github.com/pyinstaller/pyinstaller/wiki/Recipe-Multiprocessing
+    #         print('Using Windows')
+    #         multiprocessing.freeze_support()
+    #
+    #     # Open the browser
+    #     if sys.platform in ["win32", "nt"]:
+    #         os.startfile(url)
+    #     elif sys.platform == "darwin":
+    #         subprocess.Popen(["open", url])
+    #     else:
+    #         try:
+    #             subprocess.Popen(["xdg-open", url])
+    #         except OSError:
+    #             print("Please open a browser on: ", url)
 
-        # Open the browser
-        if sys.platform in ["win32", "nt"]:
-            os.startfile(url)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", url])
-        else:
+    def wait_and_open_browser():
+        import socket
+        import time
+        import webbrowser
+
+        def wait_for_server(host, port, timeout=30):
+            start_time = time.time()
+            while True:
+                try:
+                    with socket.create_connection((host, port), timeout=1):
+                        return True
+                except OSError:
+                    time.sleep(0.5)
+                    if time.time() - start_time > timeout:
+                        return False
+
+        if wait_for_server(args.host, args.port):
             try:
-                subprocess.Popen(["xdg-open", url])
-            except OSError:
-                print("Please open a browser on: ", url)
+                if sys.platform in ["win32", "nt"]:
+                    os.startfile(url)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", url])
+                else:
+                    subprocess.Popen(["xdg-open", url])
+            except Exception:
+                print(f"Please open your browser manually: {url}")
+
+    if not args.no_browser:
+        import threading
+        threading.Thread(target=wait_and_open_browser).start()
 
     if args.data_dir is not None:
         os.environ["MINT_DATA_DIR"] = args.data_dir
