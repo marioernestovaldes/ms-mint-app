@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 from ms_mint.io import mzxml_to_df
+from scipy.signal import savgol_filter, find_peaks
 
 # Replace with your actual test file
 test_file = '/home/mario/Workspace/LSARP/SRMDataForSoren/2024_10_16_Chr_STD12_Rep1.mzXML'
@@ -52,6 +53,13 @@ class MS2BrowserPlugin:
             style={"width": "400px", "marginBottom": "10px"},
         )
 
+        debug_toggle = dcc.Checklist(
+            options=[{"label": "Debug Peak Detection", "value": "debug"}],
+            value=[],
+            id="ms2-debug-toggle",
+            style={"marginBottom": "10px"}
+        )
+
         return html.Div([
             html.Div([
                 html.Button("EXPORT", id="btn-export-ms2", n_clicks=0, className="btn btn-primary"),
@@ -62,7 +70,8 @@ class MS2BrowserPlugin:
 
             html.Div([
                 html.H4("Select Channel"),
-                dropdown
+                dropdown,
+                debug_toggle,
             ], style={"marginTop": "20px"}),
 
             html.Div(id="channel-fragment-plot-container", style={"marginTop": "30px"}),
@@ -127,6 +136,92 @@ class MS2BrowserPlugin:
         return fig
 
     @staticmethod
+    def detect_ms2_peak(self, smooth=True, debug=False):
+        """
+        Detects the main chromatographic peak in MS2 fragment time series.
+
+        Returns:
+            - peak_time (float)
+            - peak_intensity (float)
+            - auc (float)
+            - total (float)
+            - smoothed (array)
+            - peaks (array)
+            - props (dict)
+        """
+        x = self["scan_time"].values
+        y = self["intensity"].values
+
+        # Smooth
+        y_smooth = savgol_filter(y, window_length=11, polyorder=2) if smooth and len(y) >= 11 else y
+
+        # Peak detection
+        peaks, props = find_peaks(y_smooth, height=1000, prominence=500, width=3)
+
+        if len(peaks) == 0:
+            return None, None, None, None, y_smooth, [], {}
+
+        main_peak_idx = peaks[np.argmax(props["peak_heights"])]
+        peak_time = x[main_peak_idx]
+        peak_intensity = props["peak_heights"].max()
+
+        # AUC around ±5 scans
+        start = max(0, main_peak_idx - 5)
+        end = min(len(y), main_peak_idx + 6)
+        auc = np.trapz(y[start:end], x[start:end])
+        total = y[start:end].sum()
+
+        return peak_time, peak_intensity, auc, total, y_smooth, peaks, props
+
+    # @staticmethod
+    # def create_debuggable_ms2_plot(df, show_debug=False):
+    #     peak_time, peak_intensity, auc, total, y_smooth, peaks, props = (
+    #         MS2BrowserPlugin.detect_ms2_peak(df)
+    #     )
+    #
+    #     x = df["scan_time"].values
+    #     y = df["intensity"].values
+    #
+    #     fig = go.Figure()
+    #
+    #     # Base stick plot
+    #     fig.add_trace(go.Scatter(
+    #         x=x,
+    #         y=y,
+    #         mode="lines",
+    #         line=dict(width=1, color="black"),
+    #         name="Raw"
+    #     ))
+    #
+    #     if show_debug:
+    #         fig.add_trace(go.Scatter(
+    #             x=x,
+    #             y=y_smooth,
+    #             mode="lines",
+    #             line=dict(width=1, color="blue"),
+    #             name="Smoothed"
+    #         ))
+    #
+    #         fig.add_trace(go.Scatter(
+    #             x=x[peaks],
+    #             y=props["peak_heights"],
+    #             mode="markers",
+    #             marker=dict(size=8, color="red"),
+    #             name="Detected Peaks"
+    #         ))
+    #
+    #     fig.update_layout(
+    #         title=f"MS2 Fragmentation Pattern — Peak Intensity: {peak_intensity:,.0f}, AUC: {auc:,.0f} @ "
+    #               f"t={peak_time:.2f}" if peak_intensity else "No Peak Detected",
+    #         xaxis_title="Scan Time",
+    #         yaxis_title="Fragment Intensity",
+    #         showlegend=show_debug,
+    #         height=350,
+    #     )
+    #
+    #     return fig
+
+    @staticmethod
     def outputs():
         return None
 
@@ -135,15 +230,19 @@ class MS2BrowserPlugin:
         @app.callback(
             Output("channel-fragment-plot-container", "children"),
             Input("channel-selector", "value"),
+            Input("ms2-debug-toggle", "value"),
             prevent_initial_call=True,
         )
-        def update_channel_plot(channel):
+        def update_channel_plot(channel, debug_flags):
             if channel is None:
-                return dcc.Markdown("Select a channel to view fragmentation over time.")
+                return dcc.Markdown("⚠️ Select a channel to view fragmentation over time.")
 
             df = MS2BrowserPlugin.df_static.copy()
+
+            # Ensure list-like structure for each row
             df["mz"] = df["mz"].apply(lambda x: x if isinstance(x, list) else [x])
             df["intensity"] = df["intensity"].apply(lambda x: x if isinstance(x, list) else [x])
 
             fig = MS2BrowserPlugin.create_channel_timeline_plot(df, channel)
             return dcc.Graph(figure=fig)
+
