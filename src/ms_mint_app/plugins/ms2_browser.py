@@ -39,13 +39,17 @@ class MS2BrowserPlugin:
             },
         )
 
-        # Dropdown of unique precursor m/z values
-        channel_options = sorted(df["filterLine_to_ELMAVEN"].dropna().unique())
+        # Dropdown of unique channels (either in "filterLine" or "filterLine_to_ELMAVEN" columns)
+        cols = [c for c in ["filterLine", "filterLine_to_ELMAVEN"] if c in df.columns]
+        values = df[cols].values.flatten().tolist()
+        clean_values = [v for v in values if isinstance(v, str) and pd.notna(v)]
+        channel_options = sorted(list(np.unique(clean_values)))
+
         dropdown = dcc.Dropdown(
             id="channel-selector",
             options=list(channel_options),
             placeholder="Select a channel...",
-            style={"width": "300px", "marginBottom": "10px"},
+            style={"width": "400px", "marginBottom": "10px"},
         )
 
         return html.Div([
@@ -66,7 +70,11 @@ class MS2BrowserPlugin:
 
     @staticmethod
     def create_channel_timeline_plot(df, channel):
-        mask = df["filterLine_to_ELMAVEN"] == channel
+        if "ESI SRM ms2" in channel:
+            mask = df["filterLine"] == channel
+        else:
+            mask = df["filterLine_to_ELMAVEN"] == channel
+
         filtered = df[mask & (df["intensity"] != 0)].copy()
 
         if filtered.empty:
@@ -75,7 +83,12 @@ class MS2BrowserPlugin:
         expanded = []
         for _, row in filtered.iterrows():
             scan_time = row["scan_time"]
-            channel = row["filterLine_to_ELMAVEN"]
+
+            if "ESI SRM ms2" in channel:
+                channel = row["filterLine"]
+            else:
+                channel = row["filterLine_to_ELMAVEN"]
+
             expanded.extend(
                 {
                     "scan_time": scan_time,
